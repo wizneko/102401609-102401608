@@ -5,6 +5,26 @@
 
 const STORAGE_KEY = 'CAMPUS_LOST_FOUND_ITEMS_V2';
 
+const legacyBuiltinImages = {
+  'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=500&q=80': 'assets/student-card.svg',
+  'https://images.unsplash.com/photo-1600294037681-c80b4cb5b434?auto=format&fit=crop&w=500&q=80': 'assets/airpods.svg',
+  'https://images.unsplash.com/photo-1517479149777-5f3b1511d5ad?auto=format&fit=crop&w=500&q=80': 'assets/umbrella.svg',
+  'https://images.unsplash.com/photo-1582139329536-e7284fece509?auto=format&fit=crop&w=500&q=80': 'assets/keys.svg',
+  'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=500&q=80': 'assets/math-book.svg',
+  'https://images.unsplash.com/photo-1588854337236-6889d631faa8?auto=format&fit=crop&w=500&q=80': 'assets/water-bottle.svg'
+};
+
+function migrateLegacyBuiltinImages(items) {
+  let changed = false;
+  const migrated = items.map(item => {
+    const replacement = legacyBuiltinImages[item.img];
+    if (!replacement) return item;
+    changed = true;
+    return { ...item, img: replacement };
+  });
+  return { items: migrated, changed };
+}
+
 // 预设高真实度校园失物招领数据集（贴近福州大学校园实际场景）
 const initialMockData = [
   {
@@ -16,7 +36,7 @@ const initialMockData = [
     date: '2026-10-02',
     timestamp: Date.now() - 1000 * 60 * 25, // 25分钟前
     desc: '黑色龙猫卡套，姓名：张*华，卡号尾号3829。已交暂存于食堂值班阿姨处，请失主核对姓名及学院后认领！',
-    img: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=500&q=80',
+    img: 'assets/student-card.svg',
     contactType: '微信',
     contactVal: 'fzu_helper_2026',
     status: 'open', // open: 进行中, solved: 已找到/已归还
@@ -32,7 +52,7 @@ const initialMockData = [
     date: '2026-10-02',
     timestamp: Date.now() - 1000 * 60 * 120, // 2小时前
     desc: '白色充电盒，套着黄色皮卡丘硅胶壳，盒盖内侧有些许铅笔划痕。内含备考期末录音资料，万分感谢捡到的同学，必有奶茶重谢！',
-    img: 'https://images.unsplash.com/photo-1600294037681-c80b4cb5b434?auto=format&fit=crop&w=500&q=80',
+    img: 'assets/airpods.svg',
     contactType: '手机号',
     contactVal: '13859012345',
     status: 'open',
@@ -48,7 +68,7 @@ const initialMockData = [
     date: '2026-10-01',
     timestamp: Date.now() - 1000 * 60 * 60 * 22, // 昨天
     desc: '黑色十骨天堂晴雨伞，手柄系有蓝色小熊挂绳，下雨天容易遗忘。目前暂存西三一楼保安室。',
-    img: 'https://images.unsplash.com/photo-1517479149777-5f3b1511d5ad?auto=format&fit=crop&w=500&q=80',
+    img: 'assets/umbrella.svg',
     contactType: 'QQ',
     contactVal: '192837465',
     status: 'open',
@@ -64,7 +84,7 @@ const initialMockData = [
     date: '2026-09-30',
     timestamp: Date.now() - 1000 * 60 * 60 * 48, // 2天前
     desc: '钥匙串上有两把宿舍门钥匙和一把黑色自行车小钥匙，挂件是一个绿色小恐龙玩偶。',
-    img: 'https://images.unsplash.com/photo-1582139329536-e7284fece509?auto=format&fit=crop&w=500&q=80',
+    img: 'assets/keys.svg',
     contactType: '微信',
     contactVal: 'key_master_fzu',
     status: 'solved', // 已成功找回
@@ -80,7 +100,7 @@ const initialMockData = [
     date: '2026-09-29',
     timestamp: Date.now() - 1000 * 60 * 60 * 72,
     desc: '书本扉页有铅笔写的姓名“李*涵”，夹着数张手写笔记草稿纸，请失主随时联系我认领。',
-    img: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=500&q=80',
+    img: 'assets/math-book.svg',
     contactType: '手机号',
     contactVal: '13950098765',
     status: 'open',
@@ -96,7 +116,7 @@ const initialMockData = [
     date: '2026-09-28',
     timestamp: Date.now() - 1000 * 60 * 60 * 96,
     desc: '深蓝色杯身，表面贴有皮卡丘反光贴纸，杯底有少许掉漆磨损痕迹。',
-    img: 'https://images.unsplash.com/photo-1588854337236-6889d631faa8?auto=format&fit=crop&w=500&q=80',
+    img: 'assets/water-bottle.svg',
     contactType: '微信',
     contactVal: 'water_cup_seeker',
     status: 'solved',
@@ -122,7 +142,9 @@ const DataManager = {
       }
       const parsed = JSON.parse(stored);
       if (Array.isArray(parsed)) {
-        return parsed;
+        const migrated = migrateLegacyBuiltinImages(parsed);
+        if (migrated.changed) this.saveItems(migrated.items);
+        return migrated.items;
       }
       this.saveItems(initialMockData);
       return JSON.parse(JSON.stringify(initialMockData));
@@ -226,6 +248,16 @@ const DataManager = {
     const target = items.find(it => String(it.id) === String(id));
     if (!target || !target.isMine) return false;
     return this.saveItems(items.filter(it => String(it.id) !== String(id)));
+  },
+
+  importItems(jsonStr) {
+    const validator = typeof Utils !== 'undefined' ? Utils : require('./utils.js');
+    const result = validator.parseImportData(jsonStr);
+    if (!result.success) return result;
+    if (!this.saveItems(result.data)) {
+      return { success: false, message: '导入保存失败，浏览器空间可能不足，原数据未更改' };
+    }
+    return { success: true, count: result.data.length };
   },
 
   /**

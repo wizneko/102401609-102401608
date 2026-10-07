@@ -631,6 +631,183 @@ const UnitTests = [
         Date.now = originalNow;
       }
     }
+  },
+  {
+    name: '测试用例 44: 导出的完整备份可以重新解析',
+    category: '导入校验测试 (parseImportData)',
+    description: '系统导出的 1.0 版本备份应能通过校验，并还原白名单字段。',
+    testFn(assert) {
+      const result = Utils.parseImportData(Utils.exportToJson([initialMockData[0]]));
+      assert.isTrue(result.success);
+      assert.strictEqual(result.data.length, 1);
+      assert.strictEqual(result.data[0].id, initialMockData[0].id);
+      assert.strictEqual(result.data[0].title, initialMockData[0].title);
+    }
+  },
+  {
+    name: '测试用例 45: 导入备份必须满足版本和数量声明',
+    category: '导入格式测试 (parseImportData)',
+    description: '缺少 data、版本不支持或 count 与实际数量不一致时拒绝导入。',
+    testFn(assert) {
+      [
+        {},
+        { version: '2.0', count: 1, data: [initialMockData[0]] },
+        { version: '1.0', count: 2, data: [initialMockData[0]] },
+        { version: '1.0', count: 1, data: initialMockData[0] }
+      ].forEach(value => assert.isFalse(Utils.parseImportData(JSON.stringify(value)).success));
+    }
+  },
+  {
+    name: '测试用例 46: 导入记录的必填字段必须存在',
+    category: '导入字段测试 (parseImportData)',
+    description: '缺少标题、日期、联系方式等关键字段时，不能写入不完整记录。',
+    testFn(assert) {
+      ['title', 'type', 'category', 'location', 'date', 'contactType', 'contactVal'].forEach(field => {
+        const item = { ...initialMockData[0] };
+        delete item[field];
+        assert.isFalse(Utils.parseImportData(JSON.stringify([item])).success, field);
+      });
+    }
+  },
+  {
+    name: '测试用例 47: 导入记录的 ID 和状态必须合法',
+    category: '导入边界测试 (parseImportData)',
+    description: '重复 ID、非正整数 ID、非法状态和错误本人标记均被拒绝。',
+    testFn(assert) {
+      const invalidItems = [
+        [{ ...initialMockData[0], id: 0 }],
+        [{ ...initialMockData[0], id: 1 }, { ...initialMockData[0], id: 1 }],
+        [{ ...initialMockData[0], status: 'deleted' }],
+        [{ ...initialMockData[0], isMine: 'yes' }]
+      ];
+      invalidItems.forEach(items => assert.isFalse(Utils.parseImportData(JSON.stringify(items)).success));
+    }
+  },
+  {
+    name: '测试用例 48: 导入图片地址必须安全且大小受限',
+    category: '导入安全测试 (parseImportData)',
+    description: '拒绝脚本协议、带凭据 URL、过长地址和无效 Base64，避免导入后污染页面。',
+    testFn(assert) {
+      const invalidImages = [
+        'javascript:alert(1)', 'https://user:pass@example.com/a.png',
+        'data:image/svg+xml;base64,PHN2Zy8+', 'data:image/png;base64,not-base64'
+      ];
+      invalidImages.forEach(img => {
+        assert.isFalse(Utils.parseImportData(JSON.stringify([{ ...initialMockData[0], img }])).success);
+      });
+      assert.isTrue(Utils.parseImportData(JSON.stringify([{ ...initialMockData[0], img: 'https://example.com/card.png' }])).success);
+      assert.isTrue(Utils.parseImportData(JSON.stringify([{ ...initialMockData[0], img: 'assets/student-card.svg' }])).success);
+      assert.isFalse(Utils.parseImportData(JSON.stringify([{ ...initialMockData[0], img: '../secret.svg' }])).success);
+    }
+  },
+  {
+    name: '测试用例 49: 导入文本长度和记录数量受限',
+    category: '导入容量测试 (parseImportData)',
+    description: '超过单字段长度、超过 1000 条或超过 10MB 的备份直接拒绝。',
+    testFn(assert) {
+      assert.isFalse(Utils.parseImportData(JSON.stringify([{ ...initialMockData[0], desc: 'a'.repeat(5001) }])).success);
+      const many = Array.from({ length: 1001 }, (_, index) => ({ ...initialMockData[0], id: index + 1 }));
+      assert.isFalse(Utils.parseImportData(JSON.stringify(many)).success);
+      assert.isFalse(Utils.parseImportData(' '.repeat(10 * 1024 * 1024 + 1)).success);
+    }
+  },
+  {
+    name: '测试用例 50: 导入数据会过滤未知字段',
+    category: '导入兼容测试 (parseImportData)',
+    description: '保留系统需要的字段，忽略备份中额外的未知属性。',
+    testFn(assert) {
+      const result = Utils.parseImportData(JSON.stringify([{ ...initialMockData[0], unknown: '<script>' }]));
+      assert.isTrue(result.success);
+      assert.strictEqual(Object.prototype.hasOwnProperty.call(result.data[0], 'unknown'), false);
+      assert.strictEqual(result.data[0].desc, initialMockData[0].desc);
+    }
+  },
+  {
+    name: '测试用例 51: 导入保存失败时不误报成功',
+    category: '导入存储测试 (DataManager.importItems)',
+    description: '模拟 LocalStorage 写入失败，导入返回失败且已有数据不被覆盖。',
+    testFn(assert) {
+      const before = JSON.stringify(DataManager.getItems());
+      const saveItems = DataManager.saveItems;
+      DataManager.saveItems = () => false;
+      try {
+        const result = DataManager.importItems(Utils.exportToJson([initialMockData[0]]));
+        assert.isFalse(result.success);
+        assert.strictEqual(JSON.stringify(DataManager.getItems()), before);
+      } finally {
+        DataManager.saveItems = saveItems;
+      }
+    }
+  },
+  {
+    name: '测试用例 52: 异常顶层和非记录元素被拒绝',
+    category: '导入结构测试 (parseImportData)',
+    description: '拒绝 null、标量、缺字段对象和数组中的非记录项，返回具体记录编号。',
+    testFn(assert) {
+      ['null', '1', 'true', '"text"', '{}', '{"data":null}', '[null]', '[[]]', '[1]'].forEach(text => {
+        assert.isFalse(Utils.parseImportData(text).success);
+      });
+      const result = Utils.parseImportData(JSON.stringify([initialMockData[0], { title: '缺字段' }]));
+      assert.isTrue(result.message.includes('第 2 条记录'));
+    }
+  },
+  {
+    name: '测试用例 53: 导入任何一条非法记录均不写入',
+    category: '导入事务测试 (DataManager.importItems)',
+    description: '列表含合法和非法记录时不能部分写入，旧列表完整保留。',
+    testFn(assert) {
+      const before = JSON.stringify(DataManager.getItems());
+      const variants = [{ title: 123 }, { date: '2025-02-29' }, { contactType: '<img>' },
+        { timestamp: -1 }, { desc: {} }, { resolvedTime: 'wrong' }, { img: 'https://example.com/" onerror="test' }];
+      variants.forEach(updates => {
+        const result = DataManager.importItems(JSON.stringify([initialMockData[0], { ...initialMockData[1], ...updates }]));
+        assert.isFalse(result.success);
+        assert.strictEqual(JSON.stringify(DataManager.getItems()), before);
+      });
+    }
+  },
+  {
+    name: '测试用例 54: 合法备份一次替换并支持空列表',
+    category: '导入恢复测试 (DataManager.importItems)',
+    description: '可恢复记录数组或带 BOM 的导出备份，空数组也是合法的备份。',
+    testFn(assert) {
+      assert.isTrue(DataManager.importItems('\uFEFF' + Utils.exportToJson([initialMockData[0]])).success);
+      assert.strictEqual(DataManager.getItems().length, 1);
+      assert.strictEqual(DataManager.getItemById(1001).isMine, true);
+      const result = DataManager.importItems('[]');
+      assert.isTrue(result.success);
+      assert.strictEqual(result.count, 0);
+      assert.strictEqual(DataManager.getItems().length, 0);
+    }
+  },
+  {
+    name: '测试用例 55: 内嵌图片长度边界不导致解析异常',
+    category: '导入图片边界测试 (parseImportData)',
+    description: '测试合法 Base64、空内容、错误填充和大内容，拒绝超过 2MB 的内嵌图片。',
+    testFn(assert) {
+      const parseImage = img => Utils.parseImportData(JSON.stringify([{ ...initialMockData[0], img }]));
+      assert.isTrue(parseImage('data:image/png;base64,iVBORw0KGgoA' + 'A'.repeat(1024 * 1024)).success);
+      assert.isTrue(parseImage('data:image/jpeg;base64,/9j/4AAQ').success);
+      assert.isTrue(parseImage('data:image/webp;base64,UklGRgAAAABXRUJQ').success);
+      ['data:image/png;base64,', 'data:image/png;base64,A===', 'data:image/png;base64,AAA',
+        'data:image/png;base64,AAAA', 'data:image/png;base64,' + 'A'.repeat(3 * 1024 * 1024),
+        'data:image/png;base64,/9j/4AAQ'].forEach(img => assert.isFalse(parseImage(img).success));
+    }
+  },
+  {
+    name: '测试用例 56: 旧版示例图自动迁移且不修改用户图片',
+    category: '本地数据迁移测试 (DataManager.getItems)',
+    description: '旧示例图片替换为本地对应物品图，用户上传的 Base64 图片保持不变。',
+    testFn(assert, storage) {
+      const oldItems = initialMockData.map(item => ({ ...item }));
+      oldItems[0].img = 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=500&q=80';
+      oldItems[1].img = 'data:image/png;base64,user-image';
+      storage.setItem('CAMPUS_LOST_FOUND_ITEMS_V2', JSON.stringify(oldItems));
+      const items = DataManager.getItems();
+      assert.strictEqual(items[0].img, 'assets/student-card.svg');
+      assert.strictEqual(items[1].img, 'data:image/png;base64,user-image');
+      assert.strictEqual(JSON.parse(storage.getItem('CAMPUS_LOST_FOUND_ITEMS_V2'))[0].img, 'assets/student-card.svg');
+    }
   }
 ];
 

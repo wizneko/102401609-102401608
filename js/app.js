@@ -20,6 +20,7 @@ const App = {
   imageReader: null,
   isImageLoading: false,
   isSubmitting: false,
+  isImporting: false,
 
   /**
    * 应用初始化
@@ -106,7 +107,7 @@ const App = {
     const timeText = Utils.timeAgo(item.timestamp || item.date);
 
     // 默认或预设实物图片
-    const imgSrc = item.img || 'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?auto=format&fit=crop&w=400&q=80';
+    const imgSrc = item.img || 'assets/water-bottle.svg';
 
     return `
       <div onclick="App.openDetail(${item.id})" class="bg-white rounded-3xl p-4 border border-slate-200/80 shadow-sm card-hover flex flex-col justify-between cursor-pointer space-y-3">
@@ -271,7 +272,7 @@ const App = {
     this.currentDetailItem = item;
 
     document.getElementById('detailTitle').innerText = item.title;
-    document.getElementById('detailImg').src = item.img || 'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?auto=format&fit=crop&w=500&q=80';
+    document.getElementById('detailImg').src = item.img || 'assets/water-bottle.svg';
     document.getElementById('detailCategoryBadge').innerText = item.category;
     document.getElementById('detailLocation').innerText = item.location;
     document.getElementById('detailDate').innerText = item.date;
@@ -674,11 +675,11 @@ const App = {
    */
   getDefaultImageForCategory(category) {
     const map = {
-      '校园卡/证件': 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=500&q=80',
-      '数码电子': 'https://images.unsplash.com/photo-1546868871-7041f2a55e12?auto=format&fit=crop&w=500&q=80',
-      '书籍文具': 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=500&q=80',
-      '生活钥匙': 'https://images.unsplash.com/photo-1582139329536-e7284fece509?auto=format&fit=crop&w=500&q=80',
-      '其他物品': 'https://images.unsplash.com/photo-1517479149777-5f3b1511d5ad?auto=format&fit=crop&w=500&q=80'
+      '校园卡/证件': 'assets/student-card.svg',
+      '数码电子': 'assets/airpods.svg',
+      '书籍文具': 'assets/math-book.svg',
+      '生活钥匙': 'assets/keys.svg',
+      '其他物品': 'assets/water-bottle.svg'
     };
     return map[category] || map['其他物品'];
   },
@@ -798,6 +799,64 @@ const App = {
     URL.revokeObjectURL(url);
     this.showToast('已导出当前数据为 JSON 文件！', 'success');
     this.toggleTestingDropdown();
+  },
+
+  handleImportData(input) {
+    if (this.isImporting) return;
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (!/\.json$/i.test(file.name) || file.size <= 0 || file.size > 10 * 1024 * 1024) {
+      input.value = '';
+      this.showToast('请选择非空且不超过 10MB 的 JSON 备份文件', 'error');
+      return;
+    }
+    this.isImporting = true;
+    const button = document.getElementById('importBackupButton');
+    if (button) button.disabled = true;
+    const finish = () => {
+      this.isImporting = false;
+      input.value = '';
+      if (button) button.disabled = false;
+    };
+    try {
+      const reader = new FileReader();
+      reader.onerror = reader.onabort = () => {
+        this.showToast('备份文件读取失败，请重新选择；原数据未更改', 'error');
+        finish();
+      };
+      reader.onload = event => {
+        try {
+          const text = event.target.result;
+          const validation = Utils.parseImportData(text);
+          if (!validation.success) {
+            this.showToast(validation.message, 'error');
+            return;
+          }
+          if (!confirm(`备份包含 ${validation.data.length} 条记录，导入将替换当前浏览器中的全部记录。建议先导出备份。确定导入吗？`)) return;
+          const result = DataManager.importItems(text);
+          if (!result.success) {
+            this.showToast(result.message, 'error');
+            return;
+          }
+          // 清理可能由“编辑我的发布”留下的返回标记，避免关闭发布框时重新打开旧弹窗。
+          this.returnToMyPosts = false;
+          this.closePublishModal();
+          this.closeDetailModal();
+          this.closeMyPostsModal();
+          this.refresh();
+          document.getElementById('testDropdown').classList.add('hidden');
+          this.showToast(`已导入 ${result.count} 条记录`, 'success');
+        } catch (error) {
+          this.showToast('导入处理失败，请重新选择备份并检查当前数据', 'error');
+        } finally {
+          finish();
+        }
+      };
+      reader.readAsText(file, 'UTF-8');
+    } catch (error) {
+      this.showToast('备份文件读取失败，请重新选择；原数据未更改', 'error');
+      finish();
+    }
   },
 
   /**

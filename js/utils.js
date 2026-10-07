@@ -268,16 +268,125 @@ const Utils = {
    * 安全解析导入的 JSON 数据
    */
   parseImportData(jsonStr) {
+    const reject = message => ({ success: false, message });
+    let parsed;
     try {
-      const parsed = JSON.parse(jsonStr);
-      const list = Array.isArray(parsed) ? parsed : (parsed.data || []);
-      if (!Array.isArray(list)) {
-        return { success: false, message: '数据格式有误，必须为数组格式' };
+      if (typeof jsonStr !== 'string' || jsonStr.length > 10 * 1024 * 1024) {
+        return reject('备份必须为 JSON 文本，大小不能超过 10MB');
       }
-      return { success: true, data: list };
+      parsed = JSON.parse(jsonStr.replace(/^\uFEFF/, ''));
     } catch (e) {
-      return { success: false, message: 'JSON 解析失败：' + e.message };
+      return reject('JSON 解析失败：' + e.message);
     }
+    const isArray = Array.isArray(parsed);
+    if (!isArray && (!parsed || typeof parsed !== 'object' ||
+        !Object.prototype.hasOwnProperty.call(parsed, 'data') || !Array.isArray(parsed.data))) {
+      return reject('备份必须是记录数组，或包含 data 数组的备份对象');
+    }
+    const list = isArray ? parsed : parsed.data;
+    if (!isArray && (parsed.version !== '1.0' || !Number.isSafeInteger(parsed.count) ||
+        parsed.count !== list.length)) {
+      return reject('备份版本或 count 数量不正确，请使用本系统导出的 1.0 版本备份');
+    }
+    if (list.length > 1000) return reject('一次最多导入 1000 条记录');
+
+    const ids = new Set();
+    const normalized = [];
+    const today = new Date();
+    for (let index = 0; index < list.length; index++) {
+      const item = list[index];
+      const invalid = message => reject(`第 ${index + 1} 条记录：${message}`);
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return invalid('必须是记录对象');
+      for (const field of ['title', 'type', 'category', 'location', 'date', 'contactType', 'contactVal']) {
+        if (typeof item[field] !== 'string') return invalid(`${field} 缺失或不是文字`);
+      }
+      if (!['微信', '手机号', 'QQ'].includes(item.contactType)) return invalid('联系方式类型不正确');
+      const validation = this.validateItem(item, today);
+      if (!validation.isValid) return invalid(validation.errors.join('；'));
+      if (!Number.isSafeInteger(item.id) || item.id <= 0 || ids.has(item.id)) {
+        return invalid('ID 必须是唯一的正整数');
+      }
+      if (!Number.isSafeInteger(item.timestamp) || item.timestamp < 0 ||
+          !Number.isFinite(new Date(item.timestamp).getTime())) return invalid('发布时间不正确');
+      if (!['open', 'solved'].includes(item.status) || typeof item.isMine !== 'boolean') {
+        return invalid('状态或本人归属标记不正确');
+      }
+      const optionalText = { desc: 5000, publisherName: 100 };
+      for (const [field, limit] of Object.entries(optionalText)) {
+        if (Object.prototype.hasOwnProperty.call(item, field) &&
+            (typeof item[field] !== 'string' || item[field].length > limit)) {
+          return invalid(`${field} 必须是文字且不超过 ${limit} 字符`);
+        }
+      }
+      let img = '';
+      if (Object.prototype.hasOwnProperty.call(item, 'img')) {
+        if (typeof item.img !== 'string') return invalid('图片地址必须是文字');
+        img = item.img;
+        if (img) {
+          const embeddedImage = /^data:image\/(png|jpeg|webp);base64,/i.exec(img);
+          if (embeddedImage) {
+            const payload = img.slice(img.indexOf(',') + 1);
+            const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+            if (!payload || payload.length % 4 !== 0 ||
+                payload.length / 4 * 3 - padding > 2 * 1024 * 1024 ||
+                !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) {
+              return invalid('内嵌图片必须是有效 Base64 且不超过 2MB');
+            }
+            // 仅解码文件头，避免为校验而复制整张图片；防止 MIME 类型伪装。
+            try {
+              const header = typeof atob === 'function'
+                ? atob(payload.slice(0, 16))
+                : Buffer.from(payload.slice(0, 16), 'base64').toString('binary');
+              const byte = index => header.charCodeAt(index);
+              const mime = embeddedImage[1].toLowerCase();
+              const isPng = mime === 'png' && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+                .every((value, index) => byte(index) === value);
+              const isJpeg = mime === 'jpeg' && byte(0) === 0xff && byte(1) === 0xd8 && byte(2) === 0xff;
+              const isWebp = mime === 'webp' && byte(0) === 0x52 && byte(1) === 0x49 &&
+                byte(2) === 0x46 && byte(3) === 0x46 && byte(8) === 0x57 &&
+                byte(9) === 0x45 && byte(10) === 0x42 && byte(11) === 0x50;
+              if (!isPng && !isJpeg && !isWebp) {
+                return invalid('内嵌图片内容与 PNG/JPEG/WEBP 类型不匹配');
+              }
+            } catch (error) {
+              return invalid('内嵌图片不是可解码的 Base64 数据');
+            }
+          } else {
+            const localAsset = /^assets\/[a-z0-9-]+\.(svg|png|jpe?g|webp)$/i.test(img);
+            if (localAsset) {
+              // 仅允许项目自带的静态资源，避免导入任意相对路径。
+            } else {
+              try {
+                const url = new URL(img);
+                if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password ||
+                    img.length > 2048 || /[\s<>"'\\]/.test(img)) return invalid('图片地址不安全或格式不正确');
+                img = url.href;
+              } catch (error) {
+                return invalid('图片地址不安全或格式不正确');
+              }
+            }
+          }
+        }
+      }
+      const record = {
+        id: item.id, timestamp: item.timestamp, type: item.type, title: item.title,
+        category: item.category, location: item.location, date: item.date,
+        contactType: item.contactType, contactVal: item.contactVal,
+        status: item.status, isMine: item.isMine, img,
+        desc: item.desc || '', publisherName: item.publisherName || '校内同学'
+      };
+      for (const field of ['updatedAt', 'resolvedTime']) {
+        if (Object.prototype.hasOwnProperty.call(item, field)) {
+          if (typeof item[field] !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(item[field]) ||
+              !Number.isFinite(Date.parse(item[field]))) return invalid(`${field} 时间格式不正确`);
+          record[field] = item[field];
+        }
+      }
+      // 只保存白名单字段，不让备份中的未知属性进入渲染和持久化流程。
+      ids.add(item.id);
+      normalized.push(record);
+    }
+    return { success: true, data: normalized };
   }
 };
 

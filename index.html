@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>校园失物招领平台 - 2026秋软件工程结对作业</title>
+  <title>校园失物招领平台</title>
   <!-- 引入现代 UI 样式支持 -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -24,7 +24,7 @@
             校园失物招领平台
             <span class="hidden sm:inline-block text-[11px] font-normal px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">福州大学校内专用</span>
           </h1>
-          <p class="text-[11px] text-slate-400 hidden sm:block">让每一件失物更快物归原主 · 软件工程结对作业</p>
+          <p class="text-[11px] text-slate-400 hidden sm:block">让每一件失物更快物归原主</p>
         </div>
       </div>
 
@@ -51,6 +51,11 @@
               <i class="fa-solid fa-file-export text-blue-500"></i>
               <span>导出当前数据 (JSON备份)</span>
             </button>
+            <button id="importBackupButton" onclick="document.getElementById('importBackupFile').click()" class="w-full text-left flex items-center gap-2 px-3 py-2 hover:bg-slate-50 transition disabled:opacity-60 disabled:cursor-not-allowed">
+              <i class="fa-solid fa-file-import text-blue-500"></i>
+              <span>导入 JSON 备份</span>
+            </button>
+            <input type="file" id="importBackupFile" accept=".json,application/json" class="hidden" onchange="App.handleImportData(this)">
           </div>
         </div>
 
@@ -209,7 +214,7 @@
     <div class="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-3">
       <div class="flex items-center gap-2">
         <i class="fa-solid fa-code text-emerald-600"></i>
-        <span>2026秋软件工程结对作业（第二次之程序实现）· 福州大学</span>
+        <span>福州大学校园失物招领平台</span>
       </div>
       <div class="flex items-center gap-4 text-slate-500">
         <a href="test/test_runner.html" target="_blank" class="hover:text-emerald-700 transition">自动化单元测试</a>

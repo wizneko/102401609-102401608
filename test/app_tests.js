@@ -37,11 +37,13 @@ function setup() {
       const item = { ...payload, id: saved.length + 1 };
       saved.push(item);
       return item;
-    }
+    },
+    importItems() { return { success: true, count: 0 }; }
   };
   class Reader {
     constructor() { this.readyState = 0; readers.push(this); }
     readAsDataURL(file) { this.file = file; this.readyState = 1; }
+    readAsText(file) { this.file = file; this.readyState = 1; }
     abort() { this.readyState = 2; if (this.onabort) this.onabort(); }
     finish(result = 'data:image/png;base64,VALID') {
       this.readyState = 2;
@@ -53,7 +55,7 @@ function setup() {
   }
   const context = vm.createContext({
     document: { getElementById: element, querySelector: () => ({ value: 'lost' }), addEventListener() {} },
-    Utils, DataManager: data, FileReader: Reader, Image: Picture
+    Utils, DataManager: data, FileReader: Reader, Image: Picture, confirm: () => true
   });
   vm.runInContext(source + '\nthis.app = App;', context);
   const app = context.app;
@@ -63,7 +65,7 @@ function setup() {
   element('imagePreview').src = 'old-image';
   const input = { files: [validFile], value: 'card.png' };
   const submit = () => app.handlePublishSubmit({ preventDefault() {} });
-  return { app, data, fields, element, input, readers, images, toasts, saved, submit };
+  return { app, data, fields, element, input, readers, images, toasts, saved, submit, context };
 }
 
 const cases = [
@@ -185,6 +187,69 @@ const cases = [
     h.submit();
     assert.equal(calls, 1);
     assert.equal(h.saved.length, 1);
+  }],
+  ['invalid import never asks to replace existing data', h => {
+    h.context.confirm = () => { throw new Error('Invalid backup must not confirm'); };
+    h.input.files = [{ name: 'bad.json', size: 100 }];
+    h.app.handleImportData(h.input);
+    h.readers[0].finish('{}');
+    assert.equal(h.toasts[0].type, 'error');
+    assert.equal(h.app.isImporting, false);
+    assert.equal(h.element('importBackupButton').disabled, false);
+  }],
+  ['cancelling import does not call storage', h => {
+    h.context.confirm = () => false;
+    h.data.importItems = () => { throw new Error('Cancelled import must not write'); };
+    h.input.files = [{ name: 'empty.json', size: 2 }];
+    h.app.handleImportData(h.input);
+    h.readers[0].finish('[]');
+    assert.equal(h.toasts.length, 0);
+    assert.equal(h.app.isImporting, false);
+  }],
+  ['import reader error permits retry', h => {
+    h.input.files = [{ name: 'backup.json', size: 100 }];
+    h.app.handleImportData(h.input);
+    h.readers[0].onerror();
+    assert.equal(h.toasts[0].type, 'error');
+    assert.equal(h.input.value, '');
+    assert.equal(h.element('importBackupButton').disabled, false);
+  }],
+  ['import save failure does not refresh the list', h => {
+    h.data.importItems = () => ({ success: false, message: '存储失败' });
+    h.app.refresh = () => { throw new Error('Failed import must not refresh'); };
+    h.input.files = [{ name: 'empty.json', size: 2 }];
+    h.app.handleImportData(h.input);
+    h.readers[0].finish('[]');
+    assert.equal(h.toasts[0].message, '存储失败');
+    assert.equal(h.toasts[0].type, 'error');
+  }],
+  ['confirmed valid import writes once and refreshes', h => {
+    let writes = 0;
+    let refreshes = 0;
+    h.data.importItems = () => { writes++; return { success: true, count: 0 }; };
+    h.app.refresh = () => { refreshes++; };
+    h.input.files = [{ name: 'empty.json', size: 2 }];
+    h.app.handleImportData(h.input);
+    h.app.handleImportData(h.input);
+    assert.equal(h.readers.length, 1);
+    h.readers[0].finish('[]');
+    assert.equal(writes, 1);
+    assert.equal(refreshes, 1);
+    assert.equal(h.toasts[0].type, 'success');
+    assert.equal(h.app.isImporting, false);
+  }],
+  ['confirmed import closes publish and my posts modals', h => {
+    let publishClosed = false;
+    let myPostsClosed = false;
+    h.app.returnToMyPosts = true;
+    h.app.closePublishModal = () => { publishClosed = true; };
+    h.app.closeMyPostsModal = () => { myPostsClosed = true; };
+    h.input.files = [{ name: 'empty.json', size: 2 }];
+    h.app.handleImportData(h.input);
+    h.readers[0].finish('[]');
+    assert.equal(publishClosed, true);
+    assert.equal(myPostsClosed, true);
+    assert.equal(h.app.returnToMyPosts, false);
   }]
 ];
 
